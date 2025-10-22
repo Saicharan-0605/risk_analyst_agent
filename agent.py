@@ -208,7 +208,7 @@ class AgentResponse(BaseModel):
     citations: Optional[List[Dict[str, Any]]] = None
 
 # --- Agent Definition ---
-risk_analysis_agent = LlmAgent(
+root_agent = LlmAgent(
     model="gemini-2.5-flash",
     name='RiskAnalysisAgent',
     description='Analyzes contract documents to find supporting citations for a given requirement and test case question.',
@@ -216,60 +216,4 @@ risk_analysis_agent = LlmAgent(
     tools=[vertex_ai_search.query,extract_and_ingest_contract],
 )
 
-root_agent = risk_analysis_agent
 
-
-import os
-from google.oauth2 import service_account
-from vertexai import agent_engines
-from vertexai.agent_engines import AdkApp
-from vertexai.preview import reasoning_engines
-import vertexai
-from dotenv import load_dotenv
-load_dotenv()
-
-SERVICE_ACCOUNT_KEY_PATH = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")
-
-
-if SERVICE_ACCOUNT_KEY_PATH:
-    credentials = service_account.Credentials.from_service_account_file(SERVICE_ACCOUNT_KEY_PATH)
-else:
-    credentials = None
-
-PROJECT_ID = os.environ.get("GCP_PROJECT_ID")
-LOCATION = os.environ.get("LOCATION")
-STAGING_BUCKET = "gs://"+os.environ.get("GCS_BUCKET_NAME")
-
-print(PROJECT_ID,LOCATION,STAGING_BUCKET)
-
-# storage.Client(project=PROJECT_ID, credentials=credentials)
-# Initialize Vertex AI with explicit credentials if available
-vertexai.init(credentials=credentials,project=PROJECT_ID, location=LOCATION,staging_bucket=STAGING_BUCKET)
-
-app = AdkApp(agent=root_agent)
-with open(SERVICE_ACCOUNT_KEY_PATH) as f:
-    service_account_info = f.read()
-    service = json.loads(service_account_info)
-
-remote_app = agent_engines.create(
-                agent_engine=app,
-                requirements=[
-                    "google-cloud-documentai",
-                    "vertexai",
-                    "google-adk",
-                    'google-cloud-aiplatform',
-                    'cloudpickle',
-                    'pydantic'
-                ],
-                display_name="Risk Analyst Agent",
-                description="ADK Agent to help users analyze contract documents for risks",
-                # service_account=service,
-                env_vars={
-                    "GCP_PROJECT_ID": os.getenv("GCP_PROJECT_ID"),
-                    "GCP_LOCATION": os.getenv("GCP_LOCATION"),
-                    "DOCAI_PROCESSOR_ID": os.getenv("DOCAI_PROCESSOR_ID"),
-                    "DATA_STORE_ID": os.getenv("VERTEX_AI_DATA_STORE_ID"),
-                    "BUCKET_NAME": os.getenv("GCS_BUCKET_NAME")
-                }
-
-            )
