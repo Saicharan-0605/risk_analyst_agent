@@ -55,7 +55,7 @@ def extract_and_ingest_contract(gcs_uri: str) -> bool:
     """
     try:
         # 1. --- Document AI: Extract Text (Unchanged) ---
-        logger.info(f"Starting document extraction for: {gcs_source}")
+        logger.info(f"Starting document extraction for: {gcs_uri}")
         # ... (all the documentai client code remains the same) ...
         docai_client = documentai.DocumentProcessorServiceClient(
             client_options=ClientOptions(api_endpoint=f"{GCP_LOCATION}-documentai.googleapis.com")
@@ -207,7 +207,7 @@ class AgentResponse(BaseModel):
     summary: Optional[str] = None
     citations: Optional[List[Dict[str, Any]]] = None
 
-# --- Agent Definition ---
+# # --- Agent Definition ---
 root_agent = LlmAgent(
     model="gemini-2.5-flash",
     name='RiskAnalysisAgent',
@@ -215,5 +215,3 @@ root_agent = LlmAgent(
     instruction=instructions,
     tools=[vertex_ai_search.query,extract_and_ingest_contract],
 )
-
-
