@@ -2,6 +2,8 @@ import os
 import logging
 from google.adk.agents.llm_agent import LlmAgent
 from google.adk.tools.base_tool import BaseTool
+from google.adk.artifacts import InMemoryArtifactService # Or GcsArtifactService
+
 
 # Google Cloud Imports
 from google.oauth2 import service_account
@@ -33,22 +35,33 @@ DATA_STORE_ID = os.getenv("VERTEX_AI_DATA_STORE_ID")
 
 BUCKET_NAME = os.getenv("GCS_BUCKET_NAME")
 
+artifact_service = InMemoryArtifactService()
+ 
 
-def extract_and_ingest_contract(file_path: str) -> bool:
+def read_gcs_file(gcs_uri: str) -> bytes:
+    """
+    Reads a file from Google Cloud Storage and returns its content as bytes.
+    """
+    storage_client = storage.Client()
+    bucket_name, blob_name = gcs_uri.replace("gs://", "").split("/", 1)
+    bucket = storage_client.bucket(bucket_name)
+    blob = bucket.blob(blob_name)
+    return blob.download_as_bytes(),blob_name
+
+def extract_and_ingest_contract(gcs_uri: str) -> bool:
     """
     Extracts content from a PDF, uploads the text to a GCS bucket,
     creates a sanitized metadata file, and ingests into Vertex AI Search from the bucket.
     """
     try:
         # 1. --- Document AI: Extract Text (Unchanged) ---
-        logger.info(f"Starting document extraction for: {file_path}")
+        logger.info(f"Starting document extraction for: {gcs_source}")
         # ... (all the documentai client code remains the same) ...
         docai_client = documentai.DocumentProcessorServiceClient(
             client_options=ClientOptions(api_endpoint=f"{GCP_LOCATION}-documentai.googleapis.com")
         )
         processor_name = docai_client.processor_path(GCP_PROJECT_ID, GCP_LOCATION, DOCAI_PROCESSOR_ID)
-        with open(file_path, "rb") as f:
-            image_content = f.read()
+        image_content,original_filename = read_gcs_file(gcs_uri)
         raw_document = documentai.RawDocument(content=image_content, mime_type="application/pdf")
         request = documentai.ProcessRequest(name=processor_name, raw_document=raw_document)
         result = docai_client.process_document(request=request)
@@ -61,23 +74,8 @@ def extract_and_ingest_contract(file_path: str) -> bool:
         storage_client = storage.Client()
         bucket = storage_client.bucket(BUCKET_NAME)
         
-        original_filename = os.path.basename(file_path)
         sanitized_id = re.sub(r'[^a-zA-Z0-9-_]', '_', original_filename)
         logger.info(f"Original filename '{original_filename}' sanitized to ID '{sanitized_id}'")
-
-        # --- THIS IS THE CORRECTED PART ---
-        # # Create a dictionary for the content. This is a standard JSON object.
-        # content_object = {
-        #     "text": extracted_text,
-        #     "original_filename": original_filename
-        # }
-
-        # # Create the final JSONL object using "structData", which takes a JSON object directly.
-        # jsonl_object = {
-        #     "id": result.document.uri if result.document.uri else sanitized_id,
-        #     "json_data": content_object  # <-- Use structData instead of jsonData
-        # }
-        # --- END OF CORRECTION ---
         
         metadata_filename = f"{sanitized_id}.txt"
         
@@ -187,7 +185,7 @@ vertex_ai_search = VertexAiSearchTool()
 
 instructions="""
     1 .You must first ask the user for the 'Requirement' and the 'Test Case Question'. Do not proceed until you have both.
-    2 .Now, ask the user to provide the contract document path for analysis
+    2 .Now, ask the user to provide the contract document gcs uri for analysis
     3.The document has been ingested. Your task is to use the `vertex_ai_search` tool to find citations.
 
         1. **Call the Tool**: Use the `vertex_ai_search` tool with the provided 'Requirement' and 'Test Case Question'.
@@ -219,3 +217,59 @@ risk_analysis_agent = LlmAgent(
 )
 
 root_agent = risk_analysis_agent
+
+
+import os
+from google.oauth2 import service_account
+from vertexai import agent_engines
+from vertexai.agent_engines import AdkApp
+from vertexai.preview import reasoning_engines
+import vertexai
+from dotenv import load_dotenv
+load_dotenv()
+
+SERVICE_ACCOUNT_KEY_PATH = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")
+
+
+if SERVICE_ACCOUNT_KEY_PATH:
+    credentials = service_account.Credentials.from_service_account_file(SERVICE_ACCOUNT_KEY_PATH)
+else:
+    credentials = None
+
+PROJECT_ID = os.environ.get("GCP_PROJECT_ID")
+LOCATION = os.environ.get("LOCATION")
+STAGING_BUCKET = "gs://"+os.environ.get("GCS_BUCKET_NAME")
+
+print(PROJECT_ID,LOCATION,STAGING_BUCKET)
+
+# storage.Client(project=PROJECT_ID, credentials=credentials)
+# Initialize Vertex AI with explicit credentials if available
+vertexai.init(credentials=credentials,project=PROJECT_ID, location=LOCATION,staging_bucket=STAGING_BUCKET)
+
+app = AdkApp(agent=root_agent)
+with open(SERVICE_ACCOUNT_KEY_PATH) as f:
+    service_account_info = f.read()
+    service = json.loads(service_account_info)
+
+remote_app = agent_engines.create(
+                agent_engine=app,
+                requirements=[
+                    "google-cloud-documentai",
+                    "vertexai",
+                    "google-adk",
+                    'google-cloud-aiplatform',
+                    'cloudpickle',
+                    'pydantic'
+                ],
+                display_name="Risk Analyst Agent",
+                description="ADK Agent to help users analyze contract documents for risks",
+                # service_account=service,
+                env_vars={
+                    "GCP_PROJECT_ID": os.getenv("GCP_PROJECT_ID"),
+                    "GCP_LOCATION": os.getenv("GCP_LOCATION"),
+                    "DOCAI_PROCESSOR_ID": os.getenv("DOCAI_PROCESSOR_ID"),
+                    "DATA_STORE_ID": os.getenv("VERTEX_AI_DATA_STORE_ID"),
+                    "BUCKET_NAME": os.getenv("GCS_BUCKET_NAME")
+                }
+
+            )
