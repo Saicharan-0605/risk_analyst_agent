@@ -51,14 +51,12 @@ BUCKET_NAME = os.getenv("GCS_BUCKET_NAME")
 
 artifact_service = InMemoryArtifactService()
  
-def get_credentials():
-    return service_account.Credentials.from_service_account_info(service_account_info)
 
 def read_gcs_file(gcs_uri: str) -> bytes:
     """
     Reads a file from Google Cloud Storage and returns its content as bytes.
     """
-    storage_client = storage.Client(credentials=get_credentials())
+    storage_client = storage.Client()
     bucket_name, blob_name = gcs_uri.replace("gs://", "").split("/", 1)
     bucket = storage_client.bucket(bucket_name)
     blob = bucket.blob(blob_name)
@@ -74,7 +72,6 @@ def extract_and_ingest_contract(gcs_uri: str) -> bool:
         logger.info(f"Starting document extraction for: {gcs_uri}")
         # ... (all the documentai client code remains the same) ...
         docai_client = documentai.DocumentProcessorServiceClient(
-            credentials=get_credentials(),
             client_options=ClientOptions(api_endpoint=f"{GCP_LOCATION}-documentai.googleapis.com")
         )
         processor_name = docai_client.processor_path(GCP_PROJECT_ID, GCP_LOCATION, DOCAI_PROCESSOR_ID)
@@ -88,7 +85,7 @@ def extract_and_ingest_contract(gcs_uri: str) -> bool:
 
         # 2. --- GCS: Prepare, Sanitize, and Upload Metadata for Ingestion ---
         logger.info(f"Preparing and uploading ingestion metadata to GCS bucket: {BUCKET_NAME}")
-        storage_client = storage.Client(credentials=get_credentials())
+        storage_client = storage.Client()
         bucket = storage_client.bucket(BUCKET_NAME)
         
         sanitized_id = re.sub(r'[^a-zA-Z0-9-_]', '_', original_filename)
@@ -106,7 +103,7 @@ def extract_and_ingest_contract(gcs_uri: str) -> bool:
         # 3. --- Vertex AI Search: Ingest from GCS Bucket (Unchanged) ---
         logger.info(f"Starting ingestion into data store: {DATA_STORE_ID} from GCS")
         # ... (the rest of the function is the same) ...
-        discovery_client = discoveryengine.DocumentServiceClient(credentials=get_credentials())
+        discovery_client = discoveryengine.DocumentServiceClient()
         parent = discovery_client.branch_path(
             project=GCP_PROJECT_ID,
             location="global",
@@ -225,7 +222,7 @@ class AgentResponse(BaseModel):
     citations: Optional[List[Dict[str, Any]]] = None
 
 # # --- Agent Definition ---
-root_agent = LlmAgent(
+ root_agent = LlmAgent(
     model="gemini-2.5-flash",
     name='RiskAnalysisAgent',
     description='Analyzes contract documents to find supporting citations for a given requirement and test case question.',
