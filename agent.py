@@ -27,22 +27,38 @@ logger = logging.getLogger(__name__)
 load_dotenv()
 
 # --- Load Configuration from Environment ---
-GOOGLE_APPLICATION_CREDENTIALS = os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
 GCP_PROJECT_ID = os.getenv("GCP_PROJECT_ID")
 GCP_LOCATION = os.getenv("GCP_LOCATION")
 DOCAI_PROCESSOR_ID = os.getenv("DOCAI_PROCESSOR_ID")
 DATA_STORE_ID = os.getenv("VERTEX_AI_DATA_STORE_ID")
 
+#service account config
+service_account_info = {
+"project_id": GCP_PROJECT_ID,
+"private_key_id": os.getenv("private_key_id"),
+"private_key": os.getenv("private_key"),
+"client_email": os.getenv("client_email"),
+"client_id": os.getenv("client_id"),
+"auth_uri": os.getenv("auth_uri"),
+"token_uri": os.getenv("token_uri"),
+"auth_provider_x509_cert_url": os.getenv("auth_provider_x509_cert_url"),
+"client_x509_cert_url": os.getenv("client_x509_cert_url"),
+"universe_domain": os.getenv("universe_domain")
+}
+
+
 BUCKET_NAME = os.getenv("GCS_BUCKET_NAME")
 
 artifact_service = InMemoryArtifactService()
  
+def get_credentials():
+    return service_account.Credentials.from_service_account_info(service_account_info)
 
 def read_gcs_file(gcs_uri: str) -> bytes:
     """
     Reads a file from Google Cloud Storage and returns its content as bytes.
     """
-    storage_client = storage.Client()
+    storage_client = storage.Client(credentials=get_credentials())
     bucket_name, blob_name = gcs_uri.replace("gs://", "").split("/", 1)
     bucket = storage_client.bucket(bucket_name)
     blob = bucket.blob(blob_name)
@@ -58,6 +74,7 @@ def extract_and_ingest_contract(gcs_uri: str) -> bool:
         logger.info(f"Starting document extraction for: {gcs_uri}")
         # ... (all the documentai client code remains the same) ...
         docai_client = documentai.DocumentProcessorServiceClient(
+            credentials=get_credentials(),
             client_options=ClientOptions(api_endpoint=f"{GCP_LOCATION}-documentai.googleapis.com")
         )
         processor_name = docai_client.processor_path(GCP_PROJECT_ID, GCP_LOCATION, DOCAI_PROCESSOR_ID)
@@ -71,7 +88,7 @@ def extract_and_ingest_contract(gcs_uri: str) -> bool:
 
         # 2. --- GCS: Prepare, Sanitize, and Upload Metadata for Ingestion ---
         logger.info(f"Preparing and uploading ingestion metadata to GCS bucket: {BUCKET_NAME}")
-        storage_client = storage.Client()
+        storage_client = storage.Client(credentials=get_credentials())
         bucket = storage_client.bucket(BUCKET_NAME)
         
         sanitized_id = re.sub(r'[^a-zA-Z0-9-_]', '_', original_filename)
@@ -89,7 +106,7 @@ def extract_and_ingest_contract(gcs_uri: str) -> bool:
         # 3. --- Vertex AI Search: Ingest from GCS Bucket (Unchanged) ---
         logger.info(f"Starting ingestion into data store: {DATA_STORE_ID} from GCS")
         # ... (the rest of the function is the same) ...
-        discovery_client = discoveryengine.DocumentServiceClient()
+        discovery_client = discoveryengine.DocumentServiceClient(credentials=get_credentials())
         parent = discovery_client.branch_path(
             project=GCP_PROJECT_ID,
             location="global",
@@ -124,7 +141,7 @@ class VertexAiSearchTool(BaseTool):
             name="vertex_ai_search",
             description="Searches for relevant citations in the contract document to support the requirement and test case question."
         )
-        self.credentials=service_account.Credentials.from_service_account_file(GOOGLE_APPLICATION_CREDENTIALS)
+        self.credentials=service_account.Credentials.from_service_account_info(service_account_info)
 
 
     async def _arun(self, requirement: str, test_case_question: str) -> Dict[str, Any]:
