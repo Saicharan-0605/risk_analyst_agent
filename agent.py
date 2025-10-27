@@ -2,8 +2,9 @@ import os
 import logging
 from google.adk.agents.llm_agent import LlmAgent
 from google.adk.tools.base_tool import BaseTool
+from google.adk.tools.function_tool import FunctionTool
 from google.adk.artifacts import InMemoryArtifactService # Or GcsArtifactService
-
+from google.adk import a2a
 
 # Google Cloud Imports
 from google.oauth2 import service_account
@@ -248,38 +249,43 @@ class VertexAiSearchTool(BaseTool):
 
 
 # --- This instantiation is now SAFE ---
-vertex_ai_search = VertexAiSearchTool()
+vertex_ai = VertexAiSearchTool()
 
 
-instructions="""
-    1 .You must first ask the user for the 'Requirement' and the 'Test Case Question'. Do not proceed until you have both.
-    2 .Now, ask the user to provide the contract document gcs uri for analysis
-    3.The document has been ingested. Your task is to use the `vertex_ai_search` tool to find citations.
+vertex_ai_search=FunctionTool(vertex_ai.query)
 
-        1. **Call the Tool**: Use the `vertex_ai_search` tool with the provided 'Requirement' and 'Test Case Question'.
+instruction = """
+1. You must first ask the user for the 'Requirement' and the 'Test Case Question'. Do not proceed until you have both.
 
-        2. **Analyze Citations**: Review the citations returned by the tool.
+2. After receiving the 'Requirement' and 'Test Case Question':
+    - If the user also provides a 'contract document GCS URI', first perform `extract_and_ingest_contract` using the provided URI.
+    - If no GCS URI is provided, skip ingestion and proceed directly.
 
-        3. **Generate Output**: Create a final response in the following JSON format:
-           {
-             "summary": "A concise summary of how the citations support the requirement.",
-             "citations": [
-               {"citation_id": "<id>", "citation_text": "<text>"},
-               ...
-             ]
-           }
+3. Next, use the `vertex_ai_search` tool with the given 'Requirement' and 'Test Case Question' to find relevant citations.
+
+4. Analyze the citations returned by `vertex_ai_search`.
+
+5. Generate the final output in the following JSON format:
+   {
+     "summary": "A concise summary of how the citations support the requirement.",
+     "citations": [
+       {"citation_id": "<id>", "citation_text": "<text>","meta_data":{<metadata>}},
+       ...
+     ]
+   }
+
+   Note : citations are direct results from `vertex_ai_search`
+            meta_data is all other remaing data from result of tool call
 """
 
-# --- Pydantic Model for Agent Response ---
-class AgentResponse(BaseModel):
-    summary: Optional[str] = None
-    citations: Optional[List[Dict[str, Any]]] = None
+
 
 # --- Agent Definition (This is now SAFE to define) ---
 root_agent = LlmAgent(
     model="gemini-2.5-flash",
     name='RiskAnalysisAgent',
     description='Analyzes contract documents to find supporting citations for a given requirement and test case question.',
-    instruction=instructions,
-    tools=[vertex_ai_search.query,extract_and_ingest_contract],
+    instruction=instruction,
+    tools=[vertex_ai_search,extract_and_ingest_contract],
 )
+
