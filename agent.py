@@ -225,24 +225,13 @@ class VertexAiSearchTool(BaseTool):
             )
 
             response = search_client.search(request=search_request)
-            print(response) # For debugging in Vertex AI logs
+            # print(response) # For debugging in Vertex AI logs
             
-            citations = []
-            for i, result in enumerate(response.results):
-                # Check if snippets exist
-                if 'snippets' in result.document.derived_struct_data and result.document.derived_struct_data['snippets']:
-                    snippet = result.document.derived_struct_data['snippets'][0]['snippet']
-                    citations.append({
-                        "citation_id": f"cite_{i+1}",
-                        "citation_text": snippet.strip().replace('\n', ' ')
-                    })
-
-            logger.info(f"Found {len(citations)} citations.")
-            return {"citations": citations}
+            return {"results": response.__repr__()}
 
         except Exception as e:
             logger.error(f"An error occurred during Vertex AI search: {e}", exc_info=True)
-            return {"citations": [], "error": str(e)}
+            return {"results": [], "error": str(e)}
 
     async def query(self, requirement: str, test_case_question: str) -> Dict[str, Any]:
         return await self._arun(requirement, test_case_question)
@@ -255,13 +244,16 @@ vertex_ai = VertexAiSearchTool()
 vertex_ai_search=FunctionTool(vertex_ai.query)
 
 instruction = """
-1. You must first ask the user for the 'Requirement' and the 'Test Case Question'. Do not proceed until you have both.
+case 1 :
+    1. You must first ask the user for the 'Requirement' and the 'Test Case Question'. Do not proceed until you have both.
 
-2. After receiving the 'Requirement' and 'Test Case Question':
+    2. Next, use the `vertex_ai_search` tool with the given 'Requirement' and 'Test Case Question' to find relevant citations.
+
+
+case 2 : 
+    1. if  you receive 'Requirement' and 'Test Case Question' and gcs uri:
     - If the user also provides a 'contract document GCS URI', first perform `extract_and_ingest_contract` using the provided URI.
-    - If no GCS URI is provided, skip ingestion and proceed directly.
 
-3. Next, use the `vertex_ai_search` tool with the given 'Requirement' and 'Test Case Question' to find relevant citations.
 
 4. Analyze the citations returned by `vertex_ai_search`.
 
